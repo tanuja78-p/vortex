@@ -58,3 +58,7 @@ dist-ssr/
 Thumbs.db
 .vscode/
 .idea/
+
+# Backups
+frontend-backup-before-v0/
+

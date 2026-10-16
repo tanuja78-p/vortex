@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from ..database import get_db
 from ..models import (
     Student, Concept, ConceptMastery, CodingSubmission,
@@ -114,7 +114,7 @@ def update_review_item(item_id: int, payload: ReviewItemUpdate, db: Session = De
     item.status = payload.status
     item.teacher_notes = payload.teacher_notes
     item.reviewer_name = payload.reviewer_name
-    item.reviewed_at = datetime.utcnow()
+    item.reviewed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(item)
 
