@@ -1,0 +1,19 @@
+{
+  "concept_map": [
+    { "id": "c1", "name": "Classes & Objects", "prerequisites": [], "difficulty": "Easy", "description": "Fundamentals of object-oriented programming." },
+    { "id": "c2", "name": "Inheritance & Polymorphism", "prerequisites": ["c1"], "difficulty": "Medium", "description": "Extending behavior and overriding methods." },
+    { "id": "c3", "name": "Dependency Injection", "prerequisites": ["c2"], "difficulty": "Hard", "description": "Decoupling components using DI containers." }
+  ],
+  "students": [
+    {
+      "id": "s1",
+      "name": "Alex Johnson",
+      "mastery": { "c1": 0.88, "c2": 0.25, "c3": 0.05 }
+    },
+    {
+      "id": "s2",
+      "name": "Sarah Smith",
+      "mastery": { "c1": 0.95, "c2": 0.90, "c3": 0.82 }
+    }
+  ]
+}
