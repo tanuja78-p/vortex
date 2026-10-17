@@ -2,7 +2,8 @@ import {
   Student, StudentDetail, Concept, QuizQuestion, QuizSubmitResponse,
   CodingProblemSummary, CodingProblemDetail, CodeSubmitResponse,
   SubmissionHistoryItem, VivaSessionResponse, VivaEvaluationResponse,
-  ReviewItem, TeacherOverview
+  ReviewItem, TeacherOverview, AdaptiveComparisonResponse,
+  SandboxSecurityReport
 } from './types';
 
 const API_BASE = '/api';
@@ -46,6 +47,20 @@ export const api = {
   async getAdaptiveQuiz(studentId: string): Promise<QuizQuestion[]> {
     const res = await fetch(`${API_BASE}/quiz/adaptive/${studentId}`);
     if (!res.ok) throw new Error('Failed to fetch adaptive quiz');
+    return res.json();
+  },
+
+  async getAdaptiveComparison(
+    studentAId = 's1',
+    studentBId = 's2',
+    conceptFilter?: string
+  ): Promise<AdaptiveComparisonResponse> {
+    const url = new URL(`${API_BASE}/quiz/adaptive-compare`, window.location.origin);
+    url.searchParams.set('student_a_id', studentAId);
+    url.searchParams.set('student_b_id', studentBId);
+    if (conceptFilter) url.searchParams.set('concept_filter', conceptFilter);
+    const res = await fetch(url.toString());
+    if (!res.ok) throw new Error('Failed to fetch adaptive comparison');
     return res.json();
   },
 
@@ -101,6 +116,12 @@ export const api = {
   async getStudentSubmissions(studentId: string): Promise<SubmissionHistoryItem[]> {
     const res = await fetch(`${API_BASE}/coding/submissions/${studentId}`);
     if (!res.ok) throw new Error('Failed to fetch submissions');
+    return res.json();
+  },
+
+  async getSecurityReport(): Promise<SandboxSecurityReport> {
+    const res = await fetch(`${API_BASE}/coding/security-report`);
+    if (!res.ok) throw new Error('Failed to fetch sandbox security report');
     return res.json();
   },
 

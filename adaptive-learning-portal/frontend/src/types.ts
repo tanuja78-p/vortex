@@ -47,7 +47,39 @@ export interface QuizQuestion {
   options: string[];
   difficulty: string;
   question_type: string;
+  selection_reason?: string;
+  target_concept_state?: MasteryState;
+  target_concept_score?: number;
+  strategy?: string;
 }
+
+export interface AdaptiveQuestionItem {
+  question: QuizQuestion;
+  selection_reason: string;
+  target_concept_id: string;
+  target_concept_name: string;
+  target_concept_state: MasteryState;
+  target_concept_score: number;
+  strategy: string;
+}
+
+export interface StudentAdaptivePath {
+  student_id: string;
+  student_name: string;
+  avatar: string;
+  overall_mastery: number;
+  status_summary: string;
+  path: AdaptiveQuestionItem[];
+}
+
+export interface AdaptiveComparisonResponse {
+  module_name: string;
+  student_a: StudentAdaptivePath;
+  student_b: StudentAdaptivePath;
+  divergence_percentage: number;
+  executive_summary: string;
+}
+
 
 export interface QuestionResult {
   question_id: string;
@@ -201,3 +233,27 @@ export interface TeacherOverview {
     assessed_students_count: number;
   }>;
 }
+
+export interface SecurityEventItem {
+  id: number;
+  student_id: string;
+  student_name: string;
+  problem_id: string | null;
+  problem_title: string | null;
+  event_type: string;
+  description: string;
+  payload: Record<string, any>;
+  containment_action: string;
+  occurred_at: string;
+}
+
+export interface SandboxSecurityReport {
+  total_contained_threats: number;
+  network_attempts_blocked: number;
+  infinite_loops_terminated: number;
+  filesystem_escapes_blocked: number;
+  sandbox_status: string;
+  architecture_overview: string;
+  recent_events: SecurityEventItem[];
+}
+

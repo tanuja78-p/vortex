@@ -5,7 +5,7 @@ import json
 from ..database import get_db
 from ..models import Student, Concept, ConceptMastery, QuizAttempt
 from ..schemas import StudentBase, StudentDetail, ConceptMasteryOut
-from ..adaptive_engine import get_student_weak_concepts
+from ..adaptive_engine import get_student_weak_concepts, apply_mastery_decay
 
 router = APIRouter(prefix="/api/students", tags=["students"])
 
@@ -19,6 +19,9 @@ def get_student_detail(student_id: str, db: Session = Depends(get_db)):
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+
+    # Apply mastery decay on every load (forgetting curve)
+    apply_mastery_decay(db, student_id)
 
     # Fetch all concepts and masteries
     concepts = db.query(Concept).all()

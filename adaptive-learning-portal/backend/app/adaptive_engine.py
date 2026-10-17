@@ -64,15 +64,24 @@ def get_student_weak_concepts(db: Session, student_id: str) -> List[ConceptMaste
     weak.sort(key=lambda m: (m.score, -m.attempts_count))
     return weak
 
-def select_adaptive_questions(
-    db: Session, student_id: str, limit: int = 5
-) -> List[QuizQuestion]:
+def select_adaptive_questions_with_reasons(
+    db: Session, student_id: str, limit: int = 5, concept_filter: str = None
+) -> List[Dict[str, Any]]:
     """
-    Adaptive Question Selector:
-    1. Prioritizes concepts where student mastery is 'Not Understood' (highest priority).
-    2. Then concepts where student is 'Needs Practice'.
-    3. Then 'Not Assessed' concepts to expand diagnostic coverage.
-    4. Dynamically chooses question difficulty (Easy for Not Understood, Medium for Needs Practice).
+    Adaptive Question Selector with Stored Reasons:
+    Analyzes student's current concept mastery profile and constructs an individualized path.
+    - If student is struggling ('Not Understood', score < 0.40):
+        Selects foundational Easy questions to remediate core misconceptions.
+        Strategy: 'Foundational Remediation'
+    - If student is in progress ('Needs Practice', 0.40 <= score < 0.80):
+        Selects Medium questions to reinforce intermediate application.
+        Strategy: 'Targeted Reinforcement'
+    - If student is proficient ('Solid', score >= 0.80):
+        Selects Hard questions to challenge advanced problem solving and prevent stagnation.
+        Strategy: 'Challenge & Acceleration'
+    - If concept is 'Not Assessed':
+        Selects diagnostic baseline questions to map knowledge frontier.
+        Strategy: 'Diagnostic Exploration'
     """
     all_concepts = db.query(Concept).all()
     concept_map = {c.id: c for c in all_concepts}
@@ -82,56 +91,210 @@ def select_adaptive_questions(
     ).all()
     mastery_by_concept = {m.concept_id: m for m in masteries}
 
-    # Group concept IDs by state
+    # If concept_filter is specified, prioritize that concept
+    candidate_cids = [concept_filter] if concept_filter and concept_filter in concept_map else list(concept_map.keys())
+
+    # Categorize concepts
     not_understood_ids = [
-        cid for cid, m in mastery_by_concept.items() if m.state == "Not Understood"
+        cid for cid in candidate_cids
+        if cid in mastery_by_concept and mastery_by_concept[cid].state == "Not Understood"
     ]
     needs_practice_ids = [
-        cid for cid, m in mastery_by_concept.items() if m.state == "Needs Practice"
+        cid for cid in candidate_cids
+        if cid in mastery_by_concept and mastery_by_concept[cid].state == "Needs Practice"
     ]
-    assessed_ids = set(mastery_by_concept.keys())
-    not_assessed_ids = [c.id for c in all_concepts if c.id not in assessed_ids]
+    solid_ids = [
+        cid for cid in candidate_cids
+        if cid in mastery_by_concept and mastery_by_concept[cid].state == "Solid"
+    ]
+    not_assessed_ids = [
+        cid for cid in candidate_cids
+        if cid not in mastery_by_concept or mastery_by_concept[cid].state == "Not Assessed"
+    ]
 
-    selected_questions: List[QuizQuestion] = []
+    # Sort within groups by score
+    not_understood_ids.sort(key=lambda cid: mastery_by_concept[cid].score)
+    needs_practice_ids.sort(key=lambda cid: mastery_by_concept[cid].score)
+    solid_ids.sort(key=lambda cid: -mastery_by_concept[cid].score)
+
+    selected: List[Dict[str, Any]] = []
     selected_qids = set()
 
-    def add_from_concepts(concept_ids: List[str], preferred_difficulty: str = None, count: int = 2):
-        nonlocal selected_questions, selected_qids
-        for cid in concept_ids:
-            if len(selected_questions) >= limit:
-                break
-            query = db.query(QuizQuestion).filter(
-                QuizQuestion.concept_id == cid,
-                ~QuizQuestion.id.in_(selected_qids) if selected_qids else True
-            )
-            if preferred_difficulty:
-                query = query.filter(QuizQuestion.difficulty == preferred_difficulty)
-            
-            items = query.limit(count).all()
-            for q in items:
-                if len(selected_questions) < limit and q.id not in selected_qids:
-                    selected_questions.append(q)
-                    selected_qids.add(q.id)
+    def try_add(cid: str, preferred_diff: str, strategy: str, reason_template: str, count: int = 1):
+        nonlocal selected, selected_qids
+        if len(selected) >= limit:
+            return
+        
+        c = concept_map.get(cid)
+        cname = c.name if c else cid
+        m = mastery_by_concept.get(cid)
+        score_pct = int((m.score if m else 0.0) * 100)
+        state = m.state if m else "Not Assessed"
 
-    # Step 1: Weakest concepts first (Not Understood, Easy/Medium)
-    if not_understood_ids:
-        add_from_concepts(not_understood_ids, preferred_difficulty="Easy", count=2)
-        add_from_concepts(not_understood_ids, preferred_difficulty="Medium", count=1)
-
-    # Step 2: Needs Practice concepts (Medium/Hard)
-    if len(selected_questions) < limit and needs_practice_ids:
-        add_from_concepts(needs_practice_ids, preferred_difficulty="Medium", count=2)
-
-    # Step 3: Unassessed concepts for exploration
-    if len(selected_questions) < limit and not_assessed_ids:
-        add_from_concepts(not_assessed_ids, preferred_difficulty="Easy", count=1)
-        add_from_concepts(not_assessed_ids, preferred_difficulty="Medium", count=1)
-
-    # Step 4: Fallback to any questions to fill limit
-    if len(selected_questions) < limit:
-        remaining = db.query(QuizQuestion).filter(
+        # Query questions for this concept with preferred difficulty
+        q_query = db.query(QuizQuestion).filter(
+            QuizQuestion.concept_id == cid,
             ~QuizQuestion.id.in_(selected_qids) if selected_qids else True
-        ).limit(limit - len(selected_questions)).all()
-        selected_questions.extend(remaining)
+        )
+        if preferred_diff:
+            diff_items = q_query.filter(QuizQuestion.difficulty == preferred_diff).limit(count).all()
+        else:
+            diff_items = []
 
-    return selected_questions[:limit]
+        # If not enough with preferred diff, take any difficulty for this concept
+        if len(diff_items) < count:
+            remaining_count = count - len(diff_items)
+            already_ids = selected_qids.union({q.id for q in diff_items})
+            fallback_items = db.query(QuizQuestion).filter(
+                QuizQuestion.concept_id == cid,
+                ~QuizQuestion.id.in_(already_ids)
+            ).limit(remaining_count).all()
+            items = diff_items + fallback_items
+        else:
+            items = diff_items
+
+        for q in items:
+            if len(selected) >= limit or q.id in selected_qids:
+                break
+            reason = reason_template.format(
+                concept=cname,
+                score=score_pct,
+                state=state,
+                diff=q.difficulty
+            )
+            item_dict = {
+                "question": q,
+                "selection_reason": reason,
+                "target_concept_id": cid,
+                "target_concept_name": cname,
+                "target_concept_state": state,
+                "target_concept_score": (m.score if m else 0.0),
+                "strategy": strategy
+            }
+            # Also attach directly to QuizQuestion object for convenience
+            setattr(q, "selection_reason", reason)
+            setattr(q, "target_concept_state", state)
+            setattr(q, "target_concept_score", (m.score if m else 0.0))
+            setattr(q, "strategy", strategy)
+
+            selected.append(item_dict)
+            selected_qids.add(q.id)
+
+    # Strategy 1: Remediate Not Understood concepts (Easy/Medium)
+    for cid in not_understood_ids:
+        try_add(
+            cid, "Easy", "Foundational Remediation",
+            "Targeting critical gap in {concept} ({score}% mastery, {state}). Serving foundational {diff} question to rebuild base comprehension.",
+            count=2
+        )
+
+    # Strategy 2: Reinforce Needs Practice concepts (Medium)
+    for cid in needs_practice_ids:
+        if len(selected) >= limit:
+            break
+        try_add(
+            cid, "Medium", "Targeted Reinforcement",
+            "Reinforcing {concept} ({score}% mastery, {state}). Serving {diff} question to advance concept synthesis towards mastery.",
+            count=1
+        )
+
+    # Strategy 3: Accelerate Solid concepts with Challenge questions (Hard/Medium)
+    for cid in solid_ids:
+        if len(selected) >= limit:
+            break
+        try_add(
+            cid, "Hard", "Challenge & Acceleration",
+            "Accelerating advanced student in {concept} ({score}% mastery, {state}). Bypassing basic drill to challenge higher-order problem solving.",
+            count=1
+        )
+
+    # Strategy 4: Diagnostic exploration for unassessed concepts
+    for cid in not_assessed_ids:
+        if len(selected) >= limit:
+            break
+        try_add(
+            cid, "Easy", "Diagnostic Exploration",
+            "Exploring unassessed concept {concept}. Serving baseline diagnostic {diff} item to evaluate starting competency.",
+            count=1
+        )
+
+    # Fallback to any remaining questions if limit not reached
+    if len(selected) < limit:
+        leftover = db.query(QuizQuestion).filter(
+            ~QuizQuestion.id.in_(selected_qids) if selected_qids else True
+        ).limit(limit - len(selected)).all()
+        for q in leftover:
+            c = concept_map.get(q.concept_id)
+            cname = c.name if c else q.concept_id
+            m = mastery_by_concept.get(q.concept_id)
+            state = m.state if m else "Not Assessed"
+            score_pct = int((m.score if m else 0.0) * 100)
+            reason = f"General reinforcement item on {cname} ({q.difficulty} tier)."
+            setattr(q, "selection_reason", reason)
+            setattr(q, "target_concept_state", state)
+            setattr(q, "target_concept_score", (m.score if m else 0.0))
+            setattr(q, "strategy", "General Reinforcement")
+            selected.append({
+                "question": q,
+                "selection_reason": reason,
+                "target_concept_id": q.concept_id,
+                "target_concept_name": cname,
+                "target_concept_state": state,
+                "target_concept_score": (m.score if m else 0.0),
+                "strategy": "General Reinforcement"
+            })
+            selected_qids.add(q.id)
+
+    return selected[:limit]
+
+
+def select_adaptive_questions(
+    db: Session, student_id: str, limit: int = 5
+) -> List[QuizQuestion]:
+    """
+    Adaptive Question Selector (returns List[QuizQuestion] with selection metadata attached).
+    """
+    items = select_adaptive_questions_with_reasons(db, student_id, limit=limit)
+    return [it["question"] for it in items]
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Mastery Decay — forgetting curve
+# ──────────────────────────────────────────────────────────────────────────────
+def apply_mastery_decay(db: Session, student_id: str) -> List[ConceptMastery]:
+    """
+    Applies a simple forgetting factor to concept mastery.
+    - Solid concepts not practiced for >= 14 days → Needs Practice (score -= 0.15)
+    - Needs Practice not practiced for >= 21 days  → Not Understood (score -= 0.15)
+    Returns list of mastery records that had decay applied.
+    """
+    import datetime
+    now    = datetime.datetime.utcnow()
+    decayed = []
+
+    masteries = db.query(ConceptMastery).filter(
+        ConceptMastery.student_id == student_id
+    ).all()
+
+    for m in masteries:
+        if m.state == "Not Assessed" or m.last_assessed_at is None:
+            continue
+
+        days_since = (now - m.last_assessed_at).days
+
+        if m.state == "Solid" and days_since >= 14:
+            m.score     = max(0.0, round(m.score - 0.15, 2))
+            m.state     = "Needs Practice"
+            m.decay_applied = True
+            decayed.append(m)
+        elif m.state == "Needs Practice" and days_since >= 21:
+            m.score     = max(0.0, round(m.score - 0.15, 2))
+            m.state     = "Not Understood"
+            m.decay_applied = True
+            decayed.append(m)
+
+    if decayed:
+        db.commit()
+
+    return decayed

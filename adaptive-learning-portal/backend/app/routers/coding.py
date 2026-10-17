@@ -4,10 +4,11 @@ from typing import List
 import json
 from datetime import datetime
 from ..database import get_db
-from ..models import CodingProblem, CodingSubmission, Student, Concept, ReviewItem
+from ..models import CodingProblem, CodingSubmission, Student, Concept, ReviewItem, SecurityEvent
 from ..schemas import (
     CodingProblemSummary, CodingProblemDetail, VisibleTestCase,
-    CodeSubmitRequest, CodeSubmitResponse, TestRunResult
+    CodeSubmitRequest, CodeSubmitResponse, TestRunResult,
+    SandboxSecurityReport, SecurityEventOut
 )
 from ..code_runner import run_isolated_code_test
 
@@ -166,6 +167,33 @@ def submit_code(payload: CodeSubmitRequest, db: Session = Depends(get_db)):
         db.add(review_item)
         db.commit()
 
+    # Hard Security Event logging (Sandbox containment proof)
+    if status in ["Security Error", "Timed Out"]:
+        violation_type = execution_result.get("violation_type", "sandbox_security_violation")
+        error_msg = execution_result.get("error_msg", "Contained execution violation.")
+        containment = (
+            "AST Pre-screen Blocked Execution (Zero Process Spawned)"
+            if status == "Security Error"
+            else "Subprocess SIGKILL Terminated & Memory Reclaimed (Timeout Guard)"
+        )
+
+        sec_event = SecurityEvent(
+            student_id=student.id,
+            problem_id=problem.id,
+            event_type=violation_type,
+            description=f"Hostile Submission Contained: {error_msg}",
+            payload=json.dumps({
+                "code_snippet": payload.code[:300],
+                "status": status,
+                "runtime_ms": runtime_ms,
+                "violation_type": violation_type,
+                "containment_action": containment
+            }),
+            occurred_at=datetime.utcnow()
+        )
+        db.add(sec_event)
+        db.commit()
+
     return CodeSubmitResponse(
         submission_id=submission.id,
         status=status,
@@ -177,6 +205,53 @@ def submit_code(payload: CodeSubmitRequest, db: Session = Depends(get_db)):
         has_evidence_flag=has_flag,
         flag_reason=combined_flag_reason,
         eligible_for_viva=(status == "Accepted")
+    )
+
+@router.get("/security-report", response_model=SandboxSecurityReport)
+def get_sandbox_security_report(db: Session = Depends(get_db)):
+    events = db.query(SecurityEvent).order_by(SecurityEvent.occurred_at.desc()).all()
+    students_map = {s.id: s.name for s in db.query(Student).all()}
+    problems_map = {p.id: p.title for p in db.query(CodingProblem).all()}
+
+    network_attempts = 0
+    infinite_loops = 0
+    filesystem_escapes = 0
+
+    event_outs: List[SecurityEventOut] = []
+    for ev in events:
+        if "network" in ev.event_type.lower() or "socket" in ev.description.lower() or "requests" in ev.description.lower():
+            network_attempts += 1
+            action = "Blocked at AST Pre-Screen (Egress Denied)"
+        elif "timeout" in ev.event_type.lower() or "infinite" in ev.description.lower() or "timed out" in ev.description.lower():
+            infinite_loops += 1
+            action = "Process Terminated via SIGKILL (2.5s Timeout)"
+        else:
+            filesystem_escapes += 1
+            action = "Subprocess Sandbox Restricted"
+
+        payload_dict = json.loads(ev.payload) if ev.payload else {}
+
+        event_outs.append(SecurityEventOut(
+            id=ev.id,
+            student_id=ev.student_id,
+            student_name=students_map.get(ev.student_id, f"Student {ev.student_id}"),
+            problem_id=ev.problem_id,
+            problem_title=problems_map.get(ev.problem_id, "Assessment Sandbox"),
+            event_type=ev.event_type,
+            description=ev.description,
+            payload=payload_dict,
+            containment_action=action,
+            occurred_at=ev.occurred_at
+        ))
+
+    return SandboxSecurityReport(
+        total_contained_threats=len(events),
+        network_attempts_blocked=network_attempts,
+        infinite_loops_terminated=infinite_loops,
+        filesystem_escapes_blocked=filesystem_escapes,
+        sandbox_status="ACTIVE & SECURE (Multi-layer AST + Subprocess Containment)",
+        architecture_overview="Layer 1: Static AST validation blocks forbidden imports (socket, urllib, os, subprocess) before execution. Layer 2: Dedicated isolated worker subprocess executes code in temporary directory. Layer 3: Hard watchdog timeout aborts processes via SIGKILL after 2.5s.",
+        recent_events=event_outs
     )
 
 @router.get("/submissions/{student_id}")
