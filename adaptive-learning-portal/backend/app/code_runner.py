@@ -8,38 +8,47 @@ import tempfile
 import subprocess
 from typing import List, Dict, Any, Tuple
 
-FORBIDDEN_MODULES = {
-    "os", "sys", "subprocess", "socket", "ctypes", "shutil", "builtins",
-    "pty", "signal", "multiprocessing", "threading", "pickle"
+NETWORK_MODULES = {
+    "socket", "requests", "urllib", "http", "urllib3", "aiohttp",
+    "ftplib", "smtplib", "telnetlib", "ssl", "httpx"
 }
+
+FORBIDDEN_MODULES = {
+    "os", "sys", "subprocess", "ctypes", "shutil", "builtins",
+    "pty", "signal", "multiprocessing", "threading", "pickle"
+}.union(NETWORK_MODULES)
 
 FORBIDDEN_CALLS = {
     "open", "eval", "exec", "__import__", "compile", "globals", "locals"
 }
 
-def analyze_ast_safety(code: str) -> Tuple[bool, str]:
+def analyze_ast_safety(code: str) -> Tuple[bool, str, str]:
     """Inspects code syntax and AST nodes to reject destructive operations before execution."""
     cleaned_code = textwrap.dedent(code).strip()
     try:
         tree = ast.parse(cleaned_code)
     except SyntaxError as e:
-        return False, f"Syntax Error: {e.msg} at line {e.lineno}"
+        return False, f"Syntax Error: {e.msg} at line {e.lineno}", "syntax_error"
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 mod = alias.name.split('.')[0]
-                if mod in FORBIDDEN_MODULES:
-                    return False, f"Importing forbidden security module '{mod}' is restricted in sandbox."
+                if mod in NETWORK_MODULES:
+                    return False, f"Restricted Sandbox: Network access module '{mod}' is strictly blocked. Outbound socket calls are disabled.", "network_attempt"
+                elif mod in FORBIDDEN_MODULES:
+                    return False, f"Restricted Sandbox: Module '{mod}' is forbidden. System shell and file manipulation blocked.", "sandbox_escape"
         elif isinstance(node, ast.ImportFrom):
             mod = (node.module or '').split('.')[0]
-            if mod in FORBIDDEN_MODULES:
-                return False, f"Importing from forbidden security module '{mod}' is restricted in sandbox."
+            if mod in NETWORK_MODULES:
+                return False, f"Restricted Sandbox: Network access module '{mod}' is strictly blocked. Outbound socket calls are disabled.", "network_attempt"
+            elif mod in FORBIDDEN_MODULES:
+                return False, f"Restricted Sandbox: Module '{mod}' is forbidden. System shell and file manipulation blocked.", "sandbox_escape"
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
-                return False, f"Calling restricted function '{node.func.id}' is blocked in sandbox."
+                return False, f"Restricted Sandbox: Calling internal function '{node.func.id}' is blocked by sandbox policy.", "restricted_call"
 
-    return True, ""
+    return True, "", ""
 
 def run_isolated_code_test(
     code: str, function_name: str, test_cases: List[Dict[str, Any]], timeout_seconds: float = 3.0
@@ -49,10 +58,12 @@ def run_isolated_code_test(
     Never executes untrusted code inside the main API process.
     """
     cleaned_code = textwrap.dedent(code).strip()
-    is_safe, error_msg = analyze_ast_safety(cleaned_code)
+    is_safe, error_msg, violation_type = analyze_ast_safety(cleaned_code)
     if not is_safe:
         return {
             "status": "Security Error",
+            "violation_type": violation_type,
+            "error_msg": error_msg,
             "tests_passed": 0,
             "total_tests": len(test_cases),
             "runtime_ms": 0.0,
@@ -185,13 +196,16 @@ print(json.dumps({{"results": results}}))
         }
 
     except subprocess.TimeoutExpired:
+        timeout_msg = f"Execution exceeded {timeout_seconds}s time limit (infinite loop or resource exhaustion contained)."
         return {
             "status": "Timed Out",
+            "violation_type": "infinite_loop_timeout",
+            "error_msg": timeout_msg,
             "tests_passed": 0,
             "total_tests": len(test_cases),
             "runtime_ms": timeout_seconds * 1000,
-            "results": [{"test_id": 1, "is_hidden": False, "passed": False, "error": f"Execution exceeded {timeout_seconds}s time limit (infinite loop or high complexity detected)."}],
-            "execution_mode": "Isolated Sandboxed Subprocess"
+            "results": [{"test_id": 1, "is_hidden": False, "passed": False, "error": timeout_msg}],
+            "execution_mode": "Isolated Sandboxed Subprocess (SIGKILL Terminated)"
         }
     except Exception as ex:
         return {

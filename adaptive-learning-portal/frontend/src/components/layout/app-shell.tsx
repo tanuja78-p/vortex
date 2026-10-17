@@ -3,10 +3,12 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   BookOpenCheck,
   Code2,
+  GitFork,
   GraduationCap,
   LayoutDashboard,
   Menu,
   MessageSquareText,
+  ShieldAlert,
   Sparkles,
   Users,
   X,
@@ -16,6 +18,8 @@ import { MouseGlow } from '@/components/ui/mouse-glow'
 
 const studentNav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/adaptive-paths', label: 'Adaptive paths (Demo)', icon: GitFork },
+  { to: '/sandbox-security', label: 'Sandbox security (Demo)', icon: ShieldAlert },
   { to: '/diagnostic', label: 'Diagnostic quiz', icon: BookOpenCheck },
   { to: '/practice', label: 'Adaptive practice', icon: Sparkles },
   { to: '/coding', label: 'Coding assessment', icon: Code2 },

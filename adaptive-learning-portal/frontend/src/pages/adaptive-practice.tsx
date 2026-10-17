@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowRight, CheckCircle2, Lightbulb, RotateCcw, TrendingDown, TrendingUp, XCircle } from 'lucide-react'
+import { ArrowRight, BrainCircuit, CheckCircle2, Lightbulb, RotateCcw, TrendingDown, TrendingUp, XCircle } from 'lucide-react'
 import { Card, CardBody, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge, DifficultyBadge } from '@/components/ui/badge'
@@ -144,6 +144,22 @@ function PracticeSession({ conceptId }: { conceptId: string }) {
                 </div>
                 <span className="text-xs text-muted-foreground font-medium">Question {attempts.length + (revealed ? 0 : 1)}</span>
               </div>
+
+              {/* Stored Selection Reason Callout */}
+              <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 flex items-start gap-2.5">
+                <BrainCircuit className="size-4 text-primary shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <span className="font-bold text-foreground">Stored Selection Reason: </span>
+                  <span className="text-muted-foreground">
+                    {current.difficulty === 'easy'
+                      ? `Targeting foundational competence in ${current.conceptName}. Serving an entry-level problem to reinforce core mechanisms.`
+                      : current.difficulty === 'medium'
+                      ? `Reinforcing intermediate mastery in ${current.conceptName}. Testing applied knowledge and edge-case handling.`
+                      : `Challenging advanced synthesis in ${current.conceptName}. Serving high-order question to test boundary analysis.`}
+                  </span>
+                </div>
+              </div>
+
               <h2 className="text-lg font-medium text-foreground text-pretty">{current.prompt}</h2>
               <OptionList
                 name={current.id}

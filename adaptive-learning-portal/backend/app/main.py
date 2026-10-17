@@ -5,7 +5,10 @@ from contextlib import asynccontextmanager
 from .database import engine, Base, SessionLocal
 from .models import *
 from .seed_data import seed_database
-from .routers import health, students, concepts, quiz, coding, viva, teacher
+from .routers import (
+    health, students, concepts, quiz, coding, viva, teacher,
+    auth, onboarding, proctor, remediation
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -21,8 +24,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Adaptive Learning & Assessment Portal API",
-    version="1.0.0",
-    description="Backend API for OP-02 Adaptive Learning & Assessment with viva validation and teacher human-review queue",
+    version="2.0.0",
+    description=(
+        "Backend API for the Vortex Adaptive Learning Portal — "
+        "student/teacher roles, batches, onboarding, mastery decay, "
+        "live proctor console, cluster alerts, remediation sets, "
+        "paste-diff session recording, and human-review queue."
+    ),
     lifespan=lifespan
 )
 
@@ -35,7 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include Routers
+# Core routers (existing)
 app.include_router(health.router)
 app.include_router(students.router)
 app.include_router(concepts.router)
@@ -44,10 +52,16 @@ app.include_router(coding.router)
 app.include_router(viva.router)
 app.include_router(teacher.router)
 
+# New feature routers
+app.include_router(auth.router)
+app.include_router(onboarding.router)
+app.include_router(proctor.router)
+app.include_router(remediation.router)
+
 @app.get("/")
 def root():
     return {
-        "message": "Welcome to Adaptive Learning & Assessment Portal API",
+        "message": "Welcome to Vortex Adaptive Learning Portal API v2",
         "health_check": "/api/health",
         "documentation": "/docs"
     }

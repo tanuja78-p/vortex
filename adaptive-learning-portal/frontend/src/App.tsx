@@ -9,6 +9,8 @@ const AdaptivePracticePage = lazy(() => import('@/pages/adaptive-practice').then
 const CodingAssessmentPage = lazy(() => import('@/pages/coding-assessment').then((m) => ({ default: m.CodingAssessmentPage })))
 const VivaAssessmentPage = lazy(() => import('@/pages/viva-assessment').then((m) => ({ default: m.VivaAssessmentPage })))
 const TeacherDashboardPage = lazy(() => import('@/pages/teacher-dashboard').then((m) => ({ default: m.TeacherDashboardPage })))
+const AdaptivePathsDemoPage = lazy(() => import('@/pages/adaptive-paths-demo').then((m) => ({ default: m.AdaptivePathsDemoPage })))
+const SandboxSecurityReportPage = lazy(() => import('@/pages/sandbox-security-report').then((m) => ({ default: m.SandboxSecurityReportPage })))
 const NotFoundPage = lazy(() => import('@/pages/not-found').then((m) => ({ default: m.NotFoundPage })))
 
 const page = (node: React.ReactNode) => <Suspense fallback={<PageSkeleton />}>{node}</Suspense>
@@ -21,7 +23,9 @@ export function App() {
           <Route index element={page(<StudentDashboardPage />)} />
           <Route path="diagnostic" element={page(<DiagnosticQuizPage />)} />
           <Route path="practice" element={page(<AdaptivePracticePage />)} />
+          <Route path="adaptive-paths" element={page(<AdaptivePathsDemoPage />)} />
           <Route path="coding" element={page(<CodingAssessmentPage />)} />
+          <Route path="sandbox-security" element={page(<SandboxSecurityReportPage />)} />
           <Route path="viva" element={page(<VivaAssessmentPage />)} />
           <Route path="teacher" element={page(<TeacherDashboardPage />)} />
           <Route path="*" element={page(<NotFoundPage />)} />

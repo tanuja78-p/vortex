@@ -5,10 +5,11 @@ import json
 from datetime import datetime
 from ..database import get_db
 from ..models import (
-    Student, Concept, ConceptMastery, CodingSubmission,
+    Student, Teacher, Batch, Concept, ConceptMastery, CodingSubmission,
     VivaSession, ReviewItem, CodingProblem
 )
 from ..schemas import ReviewItemOut, ReviewItemUpdate
+from ..adaptive_engine import apply_mastery_decay
 
 router = APIRouter(prefix="/api/teacher", tags=["teacher"])
 
